@@ -97,6 +97,15 @@ message RenameMachineResponse {
     Machine machine = 1;
 }
 
+message ChangeIPAddressesMachineRequest {
+    uint64 machine_id = 1;
+    repeated string new_ip_addresses = 2;
+}
+
+message ChangeIPAddressesMachineResponse {
+    Machine machine = 1;
+}
+
 message ListMachinesRequest {
     string user = 1;
 }

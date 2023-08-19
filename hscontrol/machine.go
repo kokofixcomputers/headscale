@@ -463,6 +463,36 @@ func (h *Headscale) RenameMachine(machine *Machine, newName string) error {
 
 	return nil
 }
+func (h *Headscale) ChangeIPAddressesMachine(machine *Machine, newIpAddresses []string) error {
+	var saveNewIPAddresses []netip.Addr
+	for _, newIpAddress := range newIpAddresses {
+		newIp := netip.MustParseAddr(newIpAddress)
+		isAvailable, err := h.isAvailableIP(machine, newIp)
+		if err != nil {
+			log.Error().
+				Caller().
+				Str("func", "ChangeIPAddressesMachine").
+				Str("machine", machine.Hostname).
+				Str("newIpAddress", newIpAddress).
+				Err(err)
+
+			return err
+		}
+		if !isAvailable {
+			return fmt.Errorf("ip is not available: %s", newIpAddress)
+		}
+		saveNewIPAddresses = append(saveNewIPAddresses, newIp)
+	}
+	machine.IPAddresses = saveNewIPAddresses
+
+	h.setLastStateChangeToNow()
+
+	if err := h.db.Save(machine).Error; err != nil {
+		return fmt.Errorf("failed to change machine ip in the database: %w", err)
+	}
+
+	return nil
+}
 
 // RefreshMachine takes a Machine struct and sets the expire field to now.
 func (h *Headscale) RefreshMachine(machine *Machine, expiry time.Time) error {

@@ -164,6 +164,45 @@ func GetIPPrefixEndpoints(na netip.Prefix) (netip.Addr, netip.Addr) {
 	return network, broadcast
 }
 
+func (h *Headscale) isAvailableIP(machine *Machine, ip netip.Addr) (bool, error) {
+	usedIps, err := h.getUsedIPs()
+	if err != nil {
+		return false, err
+	}
+	var machineIps netipx.IPSetBuilder
+	for _, ip := range machine.IPAddresses {
+		machineIps.Add(ip)
+	}
+	machineIpSet, err := machineIps.IPSet()
+	if err != nil {
+		return false, fmt.Errorf(
+			"failed to build IP Set: %w",
+			err,
+		)
+	}
+	for _, ipPrefix := range h.cfg.IPPrefixes {
+
+		if !ipPrefix.Contains(ip) {
+			continue
+		}
+
+		if usedIps.Contains(ip) {
+			if !machineIpSet.Contains(ip) {
+				continue
+			}
+		}
+
+		ipPrefixNetworkAddress, ipPrefixBroadcastAddress := GetIPPrefixEndpoints(ipPrefix)
+		if ip.Compare(ipPrefixNetworkAddress) == 0 || ip.Compare(ipPrefixBroadcastAddress) == 0 {
+			continue
+		}
+
+		return true, err
+	}
+
+	return false, nil
+}
+
 func (h *Headscale) getAvailableIP(ipPrefix netip.Prefix) (*netip.Addr, error) {
 	usedIps, err := h.getUsedIPs()
 	if err != nil {

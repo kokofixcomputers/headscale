@@ -19,31 +19,32 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	HeadscaleService_GetUser_FullMethodName            = "/headscale.v1.HeadscaleService/GetUser"
-	HeadscaleService_CreateUser_FullMethodName         = "/headscale.v1.HeadscaleService/CreateUser"
-	HeadscaleService_RenameUser_FullMethodName         = "/headscale.v1.HeadscaleService/RenameUser"
-	HeadscaleService_DeleteUser_FullMethodName         = "/headscale.v1.HeadscaleService/DeleteUser"
-	HeadscaleService_ListUsers_FullMethodName          = "/headscale.v1.HeadscaleService/ListUsers"
-	HeadscaleService_CreatePreAuthKey_FullMethodName   = "/headscale.v1.HeadscaleService/CreatePreAuthKey"
-	HeadscaleService_ExpirePreAuthKey_FullMethodName   = "/headscale.v1.HeadscaleService/ExpirePreAuthKey"
-	HeadscaleService_ListPreAuthKeys_FullMethodName    = "/headscale.v1.HeadscaleService/ListPreAuthKeys"
-	HeadscaleService_DebugCreateMachine_FullMethodName = "/headscale.v1.HeadscaleService/DebugCreateMachine"
-	HeadscaleService_GetMachine_FullMethodName         = "/headscale.v1.HeadscaleService/GetMachine"
-	HeadscaleService_SetTags_FullMethodName            = "/headscale.v1.HeadscaleService/SetTags"
-	HeadscaleService_RegisterMachine_FullMethodName    = "/headscale.v1.HeadscaleService/RegisterMachine"
-	HeadscaleService_DeleteMachine_FullMethodName      = "/headscale.v1.HeadscaleService/DeleteMachine"
-	HeadscaleService_ExpireMachine_FullMethodName      = "/headscale.v1.HeadscaleService/ExpireMachine"
-	HeadscaleService_RenameMachine_FullMethodName      = "/headscale.v1.HeadscaleService/RenameMachine"
-	HeadscaleService_ListMachines_FullMethodName       = "/headscale.v1.HeadscaleService/ListMachines"
-	HeadscaleService_MoveMachine_FullMethodName        = "/headscale.v1.HeadscaleService/MoveMachine"
-	HeadscaleService_GetRoutes_FullMethodName          = "/headscale.v1.HeadscaleService/GetRoutes"
-	HeadscaleService_EnableRoute_FullMethodName        = "/headscale.v1.HeadscaleService/EnableRoute"
-	HeadscaleService_DisableRoute_FullMethodName       = "/headscale.v1.HeadscaleService/DisableRoute"
-	HeadscaleService_GetMachineRoutes_FullMethodName   = "/headscale.v1.HeadscaleService/GetMachineRoutes"
-	HeadscaleService_DeleteRoute_FullMethodName        = "/headscale.v1.HeadscaleService/DeleteRoute"
-	HeadscaleService_CreateApiKey_FullMethodName       = "/headscale.v1.HeadscaleService/CreateApiKey"
-	HeadscaleService_ExpireApiKey_FullMethodName       = "/headscale.v1.HeadscaleService/ExpireApiKey"
-	HeadscaleService_ListApiKeys_FullMethodName        = "/headscale.v1.HeadscaleService/ListApiKeys"
+	HeadscaleService_GetUser_FullMethodName                  = "/headscale.v1.HeadscaleService/GetUser"
+	HeadscaleService_CreateUser_FullMethodName               = "/headscale.v1.HeadscaleService/CreateUser"
+	HeadscaleService_RenameUser_FullMethodName               = "/headscale.v1.HeadscaleService/RenameUser"
+	HeadscaleService_DeleteUser_FullMethodName               = "/headscale.v1.HeadscaleService/DeleteUser"
+	HeadscaleService_ListUsers_FullMethodName                = "/headscale.v1.HeadscaleService/ListUsers"
+	HeadscaleService_CreatePreAuthKey_FullMethodName         = "/headscale.v1.HeadscaleService/CreatePreAuthKey"
+	HeadscaleService_ExpirePreAuthKey_FullMethodName         = "/headscale.v1.HeadscaleService/ExpirePreAuthKey"
+	HeadscaleService_ListPreAuthKeys_FullMethodName          = "/headscale.v1.HeadscaleService/ListPreAuthKeys"
+	HeadscaleService_DebugCreateMachine_FullMethodName       = "/headscale.v1.HeadscaleService/DebugCreateMachine"
+	HeadscaleService_GetMachine_FullMethodName               = "/headscale.v1.HeadscaleService/GetMachine"
+	HeadscaleService_SetTags_FullMethodName                  = "/headscale.v1.HeadscaleService/SetTags"
+	HeadscaleService_RegisterMachine_FullMethodName          = "/headscale.v1.HeadscaleService/RegisterMachine"
+	HeadscaleService_DeleteMachine_FullMethodName            = "/headscale.v1.HeadscaleService/DeleteMachine"
+	HeadscaleService_ExpireMachine_FullMethodName            = "/headscale.v1.HeadscaleService/ExpireMachine"
+	HeadscaleService_RenameMachine_FullMethodName            = "/headscale.v1.HeadscaleService/RenameMachine"
+	HeadscaleService_ChangeIPAddressesMachine_FullMethodName = "/headscale.v1.HeadscaleService/ChangeIPAddressesMachine"
+	HeadscaleService_ListMachines_FullMethodName             = "/headscale.v1.HeadscaleService/ListMachines"
+	HeadscaleService_MoveMachine_FullMethodName              = "/headscale.v1.HeadscaleService/MoveMachine"
+	HeadscaleService_GetRoutes_FullMethodName                = "/headscale.v1.HeadscaleService/GetRoutes"
+	HeadscaleService_EnableRoute_FullMethodName              = "/headscale.v1.HeadscaleService/EnableRoute"
+	HeadscaleService_DisableRoute_FullMethodName             = "/headscale.v1.HeadscaleService/DisableRoute"
+	HeadscaleService_GetMachineRoutes_FullMethodName         = "/headscale.v1.HeadscaleService/GetMachineRoutes"
+	HeadscaleService_DeleteRoute_FullMethodName              = "/headscale.v1.HeadscaleService/DeleteRoute"
+	HeadscaleService_CreateApiKey_FullMethodName             = "/headscale.v1.HeadscaleService/CreateApiKey"
+	HeadscaleService_ExpireApiKey_FullMethodName             = "/headscale.v1.HeadscaleService/ExpireApiKey"
+	HeadscaleService_ListApiKeys_FullMethodName              = "/headscale.v1.HeadscaleService/ListApiKeys"
 )
 
 // HeadscaleServiceClient is the client API for HeadscaleService service.
@@ -68,6 +69,7 @@ type HeadscaleServiceClient interface {
 	DeleteMachine(ctx context.Context, in *DeleteMachineRequest, opts ...grpc.CallOption) (*DeleteMachineResponse, error)
 	ExpireMachine(ctx context.Context, in *ExpireMachineRequest, opts ...grpc.CallOption) (*ExpireMachineResponse, error)
 	RenameMachine(ctx context.Context, in *RenameMachineRequest, opts ...grpc.CallOption) (*RenameMachineResponse, error)
+	ChangeIPAddressesMachine(ctx context.Context, in *ChangeIPAddressesMachineRequest, opts ...grpc.CallOption) (*ChangeIPAddressesMachineResponse, error)
 	ListMachines(ctx context.Context, in *ListMachinesRequest, opts ...grpc.CallOption) (*ListMachinesResponse, error)
 	MoveMachine(ctx context.Context, in *MoveMachineRequest, opts ...grpc.CallOption) (*MoveMachineResponse, error)
 	// --- Route start ---
@@ -225,6 +227,15 @@ func (c *headscaleServiceClient) RenameMachine(ctx context.Context, in *RenameMa
 	return out, nil
 }
 
+func (c *headscaleServiceClient) ChangeIPAddressesMachine(ctx context.Context, in *ChangeIPAddressesMachineRequest, opts ...grpc.CallOption) (*ChangeIPAddressesMachineResponse, error) {
+	out := new(ChangeIPAddressesMachineResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_ChangeIPAddressesMachine_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *headscaleServiceClient) ListMachines(ctx context.Context, in *ListMachinesRequest, opts ...grpc.CallOption) (*ListMachinesResponse, error) {
 	out := new(ListMachinesResponse)
 	err := c.cc.Invoke(ctx, HeadscaleService_ListMachines_FullMethodName, in, out, opts...)
@@ -337,6 +348,7 @@ type HeadscaleServiceServer interface {
 	DeleteMachine(context.Context, *DeleteMachineRequest) (*DeleteMachineResponse, error)
 	ExpireMachine(context.Context, *ExpireMachineRequest) (*ExpireMachineResponse, error)
 	RenameMachine(context.Context, *RenameMachineRequest) (*RenameMachineResponse, error)
+	ChangeIPAddressesMachine(context.Context, *ChangeIPAddressesMachineRequest) (*ChangeIPAddressesMachineResponse, error)
 	ListMachines(context.Context, *ListMachinesRequest) (*ListMachinesResponse, error)
 	MoveMachine(context.Context, *MoveMachineRequest) (*MoveMachineResponse, error)
 	// --- Route start ---
@@ -400,6 +412,9 @@ func (UnimplementedHeadscaleServiceServer) ExpireMachine(context.Context, *Expir
 }
 func (UnimplementedHeadscaleServiceServer) RenameMachine(context.Context, *RenameMachineRequest) (*RenameMachineResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RenameMachine not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) ChangeIPAddressesMachine(context.Context, *ChangeIPAddressesMachineRequest) (*ChangeIPAddressesMachineResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ChangeIPAddressesMachine not implemented")
 }
 func (UnimplementedHeadscaleServiceServer) ListMachines(context.Context, *ListMachinesRequest) (*ListMachinesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListMachines not implemented")
@@ -714,6 +729,24 @@ func _HeadscaleService_RenameMachine_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HeadscaleService_ChangeIPAddressesMachine_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ChangeIPAddressesMachineRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).ChangeIPAddressesMachine(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_ChangeIPAddressesMachine_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).ChangeIPAddressesMachine(ctx, req.(*ChangeIPAddressesMachineRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _HeadscaleService_ListMachines_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListMachinesRequest)
 	if err := dec(in); err != nil {
@@ -960,6 +993,10 @@ var HeadscaleService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RenameMachine",
 			Handler:    _HeadscaleService_RenameMachine_Handler,
+		},
+		{
+			MethodName: "ChangeIPAddressesMachine",
+			Handler:    _HeadscaleService_ChangeIPAddressesMachine_Handler,
 		},
 		{
 			MethodName: "ListMachines",

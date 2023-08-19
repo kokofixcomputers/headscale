@@ -112,6 +112,13 @@ service HeadscaleService {
         };
     }
 
+    rpc ChangeIPAddressesMachine(ChangeIPAddressesMachineRequest) returns(ChangeIPAddressesMachineResponse) {
+        option(google.api.http) = {
+            post : "/api/v1/machine/{machine_id}/changeipaddresses"
+            body : "*"
+        };
+    }
+
     rpc ListMachines(ListMachinesRequest) returns(ListMachinesResponse) {
         option(google.api.http) = {
             get : "/api/v1/machine"

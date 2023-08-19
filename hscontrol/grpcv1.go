@@ -309,6 +309,31 @@ func (api headscaleV1APIServer) RenameMachine(
 	return &v1.RenameMachineResponse{Machine: machine.toProto()}, nil
 }
 
+func (api headscaleV1APIServer) ChangeIPAddressesMachine(
+	ctx context.Context,
+	request *v1.ChangeIPAddressesMachineRequest,
+) (*v1.ChangeIPAddressesMachineResponse, error) {
+	machine, err := api.h.GetMachineByID(request.GetMachineId())
+	if err != nil {
+		return nil, err
+	}
+
+	err = api.h.ChangeIPAddressesMachine(
+		machine,
+		request.GetNewIpAddresses(),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Trace().
+		Str("machine", machine.Hostname).
+		Strs("new_ip_addresses", request.GetNewIpAddresses()).
+		Msg("machine ip addresses changed")
+
+	return &v1.ChangeIPAddressesMachineResponse{Machine: machine.toProto()}, nil
+}
+
 func (api headscaleV1APIServer) ListMachines(
 	ctx context.Context,
 	request *v1.ListMachinesRequest,
