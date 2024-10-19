@@ -1,11 +1,11 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 
 	survey "github.com/AlecAivazis/survey/v2"
 	v1 "github.com/juanfont/headscale/gen/go/headscale/v1"
-	"github.com/juanfont/headscale/hscontrol"
 	"github.com/pterm/pterm"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -20,9 +20,7 @@ func init() {
 	userCmd.AddCommand(renameUserCmd)
 }
 
-const (
-	errMissingParameter = hscontrol.Error("missing parameters")
-)
+var errMissingParameter = errors.New("missing parameters")
 
 var userCmd = &cobra.Command{
 	Use:     "users",
@@ -46,7 +44,7 @@ var createUserCmd = &cobra.Command{
 
 		userName := args[0]
 
-		ctx, client, conn, cancel := getHeadscaleCLIClient()
+		ctx, client, conn, cancel := newHeadscaleCLIWithConfig()
 		defer cancel()
 		defer conn.Close()
 
@@ -65,11 +63,9 @@ var createUserCmd = &cobra.Command{
 				),
 				output,
 			)
-
-			return
 		}
 
-		SuccessOutput(response.User, "User created", output)
+		SuccessOutput(response.GetUser(), "User created", output)
 	},
 }
 
@@ -93,7 +89,7 @@ var destroyUserCmd = &cobra.Command{
 			Name: userName,
 		}
 
-		ctx, client, conn, cancel := getHeadscaleCLIClient()
+		ctx, client, conn, cancel := newHeadscaleCLIWithConfig()
 		defer cancel()
 		defer conn.Close()
 
@@ -104,8 +100,6 @@ var destroyUserCmd = &cobra.Command{
 				fmt.Sprintf("Error: %s", status.Convert(err).Message()),
 				output,
 			)
-
-			return
 		}
 
 		confirm := false
@@ -136,8 +130,6 @@ var destroyUserCmd = &cobra.Command{
 					),
 					output,
 				)
-
-				return
 			}
 			SuccessOutput(response, "User destroyed", output)
 		} else {
@@ -153,7 +145,7 @@ var listUsersCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		output, _ := cmd.Flags().GetString("output")
 
-		ctx, client, conn, cancel := getHeadscaleCLIClient()
+		ctx, client, conn, cancel := newHeadscaleCLIWithConfig()
 		defer cancel()
 		defer conn.Close()
 
@@ -166,14 +158,10 @@ var listUsersCmd = &cobra.Command{
 				fmt.Sprintf("Cannot get users: %s", status.Convert(err).Message()),
 				output,
 			)
-
-			return
 		}
 
 		if output != "" {
-			SuccessOutput(response.Users, "", output)
-
-			return
+			SuccessOutput(response.GetUsers(), "", output)
 		}
 
 		tableData := pterm.TableData{{"ID", "Name", "Created"}}
@@ -194,8 +182,6 @@ var listUsersCmd = &cobra.Command{
 				fmt.Sprintf("Failed to render pterm table: %s", err),
 				output,
 			)
-
-			return
 		}
 	},
 }
@@ -215,7 +201,7 @@ var renameUserCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		output, _ := cmd.Flags().GetString("output")
 
-		ctx, client, conn, cancel := getHeadscaleCLIClient()
+		ctx, client, conn, cancel := newHeadscaleCLIWithConfig()
 		defer cancel()
 		defer conn.Close()
 
@@ -234,10 +220,8 @@ var renameUserCmd = &cobra.Command{
 				),
 				output,
 			)
-
-			return
 		}
 
-		SuccessOutput(response.User, "User renamed", output)
+		SuccessOutput(response.GetUser(), "User renamed", output)
 	},
 }

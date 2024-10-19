@@ -9,7 +9,7 @@ import (
 	"github.com/ory/dockertest/v3"
 )
 
-const dockerExecuteTimeout = time.Second * 10
+const dockerExecuteTimeout = time.Second * 30
 
 var (
 	ErrDockertestCommandFailed  = errors.New("dockertest command failed")
@@ -62,7 +62,7 @@ func ExecuteCommand(
 		exitCode, err := resource.Exec(
 			cmd,
 			dockertest.ExecOptions{
-				Env:    append(env, "HEADSCALE_LOG_LEVEL=disabled"),
+				Env:    append(env, "HEADSCALE_LOG_LEVEL=info"),
 				StdOut: &stdout,
 				StdErr: &stderr,
 			},

@@ -6,10 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"reflect"
 
 	v1 "github.com/juanfont/headscale/gen/go/headscale/v1"
 	"github.com/juanfont/headscale/hscontrol"
+	"github.com/juanfont/headscale/hscontrol/types"
+	"github.com/juanfont/headscale/hscontrol/util"
 	"github.com/rs/zerolog/log"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -22,8 +23,8 @@ const (
 	SocketWritePermissions  = 0o666
 )
 
-func getHeadscaleApp() (*hscontrol.Headscale, error) {
-	cfg, err := hscontrol.GetHeadscaleConfig()
+func newHeadscaleServerWithConfig() (*hscontrol.Headscale, error) {
+	cfg, err := types.LoadServerConfig()
 	if err != nil {
 		return nil, fmt.Errorf(
 			"failed to load configuration while creating headscale instance: %w",
@@ -36,24 +37,11 @@ func getHeadscaleApp() (*hscontrol.Headscale, error) {
 		return nil, err
 	}
 
-	// We are doing this here, as in the future could be cool to have it also hot-reload
-
-	if cfg.ACL.PolicyPath != "" {
-		aclPath := hscontrol.AbsolutePathFromConfigPath(cfg.ACL.PolicyPath)
-		err = app.LoadACLPolicyFromPath(aclPath)
-		if err != nil {
-			log.Fatal().
-				Str("path", aclPath).
-				Err(err).
-				Msg("Could not load the ACL policy")
-		}
-	}
-
 	return app, nil
 }
 
-func getHeadscaleCLIClient() (context.Context, v1.HeadscaleServiceClient, *grpc.ClientConn, context.CancelFunc) {
-	cfg, err := hscontrol.GetHeadscaleConfig()
+func newHeadscaleCLIWithConfig() (context.Context, v1.HeadscaleServiceClient, *grpc.ClientConn, context.CancelFunc) {
+	cfg, err := types.LoadCLIConfig()
 	if err != nil {
 		log.Fatal().
 			Err(err).
@@ -84,7 +72,7 @@ func getHeadscaleCLIClient() (context.Context, v1.HeadscaleServiceClient, *grpc.
 
 		// Try to give the user better feedback if we cannot write to the headscale
 		// socket.
-		socket, err := os.OpenFile(cfg.UnixSocket, os.O_WRONLY, SocketWritePermissions) //nolint
+		socket, err := os.OpenFile(cfg.UnixSocket, os.O_WRONLY, SocketWritePermissions) // nolint
 		if err != nil {
 			if os.IsPermission(err) {
 				log.Fatal().
@@ -98,7 +86,7 @@ func getHeadscaleCLIClient() (context.Context, v1.HeadscaleServiceClient, *grpc.
 		grpcOptions = append(
 			grpcOptions,
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
-			grpc.WithContextDialer(hscontrol.GrpcSocketDialer),
+			grpc.WithContextDialer(util.GrpcSocketDialer),
 		)
 	} else {
 		// If we are not connecting to a local server, require an API key for authentication
@@ -142,42 +130,47 @@ func getHeadscaleCLIClient() (context.Context, v1.HeadscaleServiceClient, *grpc.
 	return ctx, client, conn, cancel
 }
 
-func SuccessOutput(result interface{}, override string, outputFormat string) {
+func output(result interface{}, override string, outputFormat string) string {
 	var jsonBytes []byte
 	var err error
 	switch outputFormat {
 	case "json":
 		jsonBytes, err = json.MarshalIndent(result, "", "\t")
 		if err != nil {
-			log.Fatal().Err(err)
+			log.Fatal().Err(err).Msg("failed to unmarshal output")
 		}
 	case "json-line":
 		jsonBytes, err = json.Marshal(result)
 		if err != nil {
-			log.Fatal().Err(err)
+			log.Fatal().Err(err).Msg("failed to unmarshal output")
 		}
 	case "yaml":
 		jsonBytes, err = yaml.Marshal(result)
 		if err != nil {
-			log.Fatal().Err(err)
+			log.Fatal().Err(err).Msg("failed to unmarshal output")
 		}
 	default:
-		//nolint
-		fmt.Println(override)
-
-		return
+		// nolint
+		return override
 	}
 
-	//nolint
-	fmt.Println(string(jsonBytes))
+	return string(jsonBytes)
 }
 
+// SuccessOutput prints the result to stdout and exits with status code 0.
+func SuccessOutput(result interface{}, override string, outputFormat string) {
+	fmt.Println(output(result, override, outputFormat))
+	os.Exit(0)
+}
+
+// ErrorOutput prints an error message to stderr and exits with status code 1.
 func ErrorOutput(errResult error, override string, outputFormat string) {
 	type errOutput struct {
 		Error string `json:"error"`
 	}
 
-	SuccessOutput(errOutput{errResult.Error()}, override, outputFormat)
+	fmt.Fprintf(os.Stderr, "%s\n", output(errOutput{errResult.Error()}, override, outputFormat))
+	os.Exit(1)
 }
 
 func HasMachineOutputFlag() bool {
@@ -206,14 +199,4 @@ func (t tokenAuth) GetRequestMetadata(
 
 func (tokenAuth) RequireTransportSecurity() bool {
 	return true
-}
-
-func contains[T string](ts []T, t T) bool {
-	for _, v := range ts {
-		if reflect.DeepEqual(v, t) {
-			return true
-		}
-	}
-
-	return false
 }

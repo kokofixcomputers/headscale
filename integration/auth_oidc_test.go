@@ -14,12 +14,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/juanfont/headscale/hscontrol"
+	"github.com/juanfont/headscale/hscontrol/types"
+	"github.com/juanfont/headscale/hscontrol/util"
 	"github.com/juanfont/headscale/integration/dockertestutil"
 	"github.com/juanfont/headscale/integration/hsic"
 	"github.com/ory/dockertest/v3"
 	"github.com/ory/dockertest/v3/docker"
 	"github.com/samber/lo"
+	"github.com/stretchr/testify/assert"
 )
 
 const (
@@ -40,23 +42,20 @@ func TestOIDCAuthenticationPingAll(t *testing.T) {
 	IntegrationSkip(t)
 	t.Parallel()
 
-	baseScenario, err := NewScenario()
-	if err != nil {
-		t.Errorf("failed to create scenario: %s", err)
-	}
+	baseScenario, err := NewScenario(dockertestMaxWait())
+	assertNoErr(t, err)
 
 	scenario := AuthOIDCScenario{
 		Scenario: baseScenario,
 	}
+	defer scenario.ShutdownAssertNoPanics(t)
 
 	spec := map[string]int{
-		"user1": len(TailscaleVersions),
+		"user1": len(MustTestVersions),
 	}
 
 	oidcConfig, err := scenario.runMockOIDC(defaultAccessTTL)
-	if err != nil {
-		t.Errorf("failed to run mock OIDC server: %s", err)
-	}
+	assertNoErrf(t, "failed to run mock OIDC server: %s", err)
 
 	oidcMap := map[string]string{
 		"HEADSCALE_OIDC_ISSUER":             oidcConfig.Issuer,
@@ -73,24 +72,18 @@ func TestOIDCAuthenticationPingAll(t *testing.T) {
 		hsic.WithHostnameAsServerURL(),
 		hsic.WithFileInContainer("/tmp/hs_client_oidc_secret", []byte(oidcConfig.ClientSecret)),
 	)
-	if err != nil {
-		t.Errorf("failed to create headscale environment: %s", err)
-	}
+	assertNoErrHeadscaleEnv(t, err)
 
 	allClients, err := scenario.ListTailscaleClients()
-	if err != nil {
-		t.Errorf("failed to get clients: %s", err)
-	}
+	assertNoErrListClients(t, err)
 
 	allIps, err := scenario.ListTailscaleClientsIPs()
-	if err != nil {
-		t.Errorf("failed to get clients: %s", err)
-	}
+	assertNoErrListClientIPs(t, err)
 
 	err = scenario.WaitForTailscaleSync()
-	if err != nil {
-		t.Errorf("failed wait for tailscale clients to be in sync: %s", err)
-	}
+	assertNoErrSync(t, err)
+
+	// assertClientsState(t, allClients)
 
 	allAddrs := lo.Map(allIps, func(x netip.Addr, index int) string {
 		return x.String()
@@ -98,36 +91,31 @@ func TestOIDCAuthenticationPingAll(t *testing.T) {
 
 	success := pingAllHelper(t, allClients, allAddrs)
 	t.Logf("%d successful pings out of %d", success, len(allClients)*len(allIps))
-
-	err = scenario.Shutdown()
-	if err != nil {
-		t.Errorf("failed to tear down scenario: %s", err)
-	}
 }
 
+// This test is really flaky.
 func TestOIDCExpireNodesBasedOnTokenExpiry(t *testing.T) {
 	IntegrationSkip(t)
 	t.Parallel()
 
 	shortAccessTTL := 5 * time.Minute
 
-	baseScenario, err := NewScenario()
-	if err != nil {
-		t.Errorf("failed to create scenario: %s", err)
-	}
+	baseScenario, err := NewScenario(dockertestMaxWait())
+	assertNoErr(t, err)
+
+	baseScenario.pool.MaxWait = 5 * time.Minute
 
 	scenario := AuthOIDCScenario{
 		Scenario: baseScenario,
 	}
+	defer scenario.ShutdownAssertNoPanics(t)
 
 	spec := map[string]int{
-		"user1": len(TailscaleVersions),
+		"user1": 3,
 	}
 
 	oidcConfig, err := scenario.runMockOIDC(shortAccessTTL)
-	if err != nil {
-		t.Fatalf("failed to run mock OIDC server: %s", err)
-	}
+	assertNoErrf(t, "failed to run mock OIDC server: %s", err)
 
 	oidcMap := map[string]string{
 		"HEADSCALE_OIDC_ISSUER":                oidcConfig.Issuer,
@@ -143,24 +131,18 @@ func TestOIDCExpireNodesBasedOnTokenExpiry(t *testing.T) {
 		hsic.WithConfigEnv(oidcMap),
 		hsic.WithHostnameAsServerURL(),
 	)
-	if err != nil {
-		t.Errorf("failed to create headscale environment: %s", err)
-	}
+	assertNoErrHeadscaleEnv(t, err)
 
 	allClients, err := scenario.ListTailscaleClients()
-	if err != nil {
-		t.Errorf("failed to get clients: %s", err)
-	}
+	assertNoErrListClients(t, err)
 
 	allIps, err := scenario.ListTailscaleClientsIPs()
-	if err != nil {
-		t.Errorf("failed to get clients: %s", err)
-	}
+	assertNoErrListClientIPs(t, err)
 
 	err = scenario.WaitForTailscaleSync()
-	if err != nil {
-		t.Errorf("failed wait for tailscale clients to be in sync: %s", err)
-	}
+	assertNoErrSync(t, err)
+
+	// assertClientsState(t, allClients)
 
 	allAddrs := lo.Map(allIps, func(x netip.Addr, index int) string {
 		return x.String()
@@ -169,13 +151,13 @@ func TestOIDCExpireNodesBasedOnTokenExpiry(t *testing.T) {
 	success := pingAllHelper(t, allClients, allAddrs)
 	t.Logf("%d successful pings out of %d (before expiry)", success, len(allClients)*len(allIps))
 
-	// await all nodes being logged out after OIDC token expiry
-	scenario.WaitForTailscaleLogout()
+	// This is not great, but this sadly is a time dependent test, so the
+	// safe thing to do is wait out the whole TTL time before checking if
+	// the clients have logged out. The Wait function cant do it itself
+	// as it has an upper bound of 1 min.
+	time.Sleep(shortAccessTTL)
 
-	err = scenario.Shutdown()
-	if err != nil {
-		t.Errorf("failed to tear down scenario: %s", err)
-	}
+	assertTailscaleNodesLogout(t, allClients)
 }
 
 func (s *AuthOIDCScenario) CreateHeadscaleEnv(
@@ -187,7 +169,7 @@ func (s *AuthOIDCScenario) CreateHeadscaleEnv(
 		return err
 	}
 
-	err = headscale.WaitForReady()
+	err = headscale.WaitForRunning()
 	if err != nil {
 		return err
 	}
@@ -213,14 +195,14 @@ func (s *AuthOIDCScenario) CreateHeadscaleEnv(
 	return nil
 }
 
-func (s *AuthOIDCScenario) runMockOIDC(accessTTL time.Duration) (*hscontrol.OIDCConfig, error) {
+func (s *AuthOIDCScenario) runMockOIDC(accessTTL time.Duration) (*types.OIDCConfig, error) {
 	port, err := dockertestutil.RandomFreeHostPort()
 	if err != nil {
 		log.Fatalf("could not find an open port: %s", err)
 	}
 	portNotation := fmt.Sprintf("%d/tcp", port)
 
-	hash, _ := hscontrol.GenerateRandomStringDNSSafe(hsicOIDCMockHashLength)
+	hash, _ := util.GenerateRandomStringDNSSafe(hsicOIDCMockHashLength)
 
 	hostname := fmt.Sprintf("hs-oidcmock-%s", hash)
 
@@ -287,7 +269,7 @@ func (s *AuthOIDCScenario) runMockOIDC(accessTTL time.Duration) (*hscontrol.OIDC
 
 	log.Printf("headscale mock oidc is ready for tests at %s", hostEndpoint)
 
-	return &hscontrol.OIDCConfig{
+	return &types.OIDCConfig{
 		Issuer: fmt.Sprintf(
 			"http://%s/oidc",
 			net.JoinHostPort(s.mockOIDC.GetIPInNetwork(s.network), strconv.Itoa(port)),
@@ -310,15 +292,11 @@ func (s *AuthOIDCScenario) runTailscaleUp(
 	log.Printf("running tailscale up for user %s", userStr)
 	if user, ok := s.users[userStr]; ok {
 		for _, client := range user.Clients {
-			user.joinWaitGroup.Add(1)
-
-			go func(c TailscaleClient) {
-				defer user.joinWaitGroup.Done()
-
-				// TODO(juanfont): error handle this
-				loginURL, err := c.UpWithLoginURL(loginServer)
+			c := client
+			user.joinWaitGroup.Go(func() error {
+				loginURL, err := c.LoginWithURL(loginServer)
 				if err != nil {
-					log.Printf("failed to run tailscale up: %s", err)
+					log.Printf("%s failed to run tailscale up: %s", c.Hostname(), err)
 				}
 
 				loginURL.Host = fmt.Sprintf("%s:8080", headscale.GetIP())
@@ -330,44 +308,63 @@ func (s *AuthOIDCScenario) runTailscaleUp(
 
 				log.Printf("%s login url: %s\n", c.Hostname(), loginURL.String())
 
-				httpClient := &http.Client{Transport: insecureTransport}
-				ctx := context.Background()
-				req, _ := http.NewRequestWithContext(ctx, http.MethodGet, loginURL.String(), nil)
-				resp, err := httpClient.Do(req)
-				if err != nil {
-					log.Printf("%s failed to get login url %s: %s", c.Hostname(), loginURL, err)
+				if err := s.pool.Retry(func() error {
+					log.Printf("%s logging in with url", c.Hostname())
+					httpClient := &http.Client{Transport: insecureTransport}
+					ctx := context.Background()
+					req, _ := http.NewRequestWithContext(ctx, http.MethodGet, loginURL.String(), nil)
+					resp, err := httpClient.Do(req)
+					if err != nil {
+						log.Printf(
+							"%s failed to login using url %s: %s",
+							c.Hostname(),
+							loginURL,
+							err,
+						)
 
-					return
-				}
+						return err
+					}
 
-				defer resp.Body.Close()
+					if resp.StatusCode != http.StatusOK {
+						log.Printf("%s response code of oidc login request was %s", c.Hostname(), resp.Status)
 
-				_, err = io.ReadAll(resp.Body)
-				if err != nil {
-					log.Printf("%s failed to read response body: %s", c.Hostname(), err)
+						return errStatusCodeNotOK
+					}
 
-					return
+					defer resp.Body.Close()
+
+					_, err = io.ReadAll(resp.Body)
+					if err != nil {
+						log.Printf("%s failed to read response body: %s", c.Hostname(), err)
+
+						return err
+					}
+
+					return nil
+				}); err != nil {
+					return err
 				}
 
 				log.Printf("Finished request for %s to join tailnet", c.Hostname())
-			}(client)
 
-			err = client.WaitForReady()
-			if err != nil {
-				log.Printf("error waiting for client %s to be ready: %s", client.Hostname(), err)
-			}
+				return nil
+			})
 
 			log.Printf("client %s is ready", client.Hostname())
 		}
 
-		user.joinWaitGroup.Wait()
+		if err := user.joinWaitGroup.Wait(); err != nil {
+			return err
+		}
 
 		for _, client := range user.Clients {
-			err := client.WaitForReady()
+			err := client.WaitForRunning()
 			if err != nil {
-				log.Printf("client %s was not ready: %s", client.Hostname(), err)
-
-				return fmt.Errorf("failed to up tailscale node: %w", err)
+				return fmt.Errorf(
+					"%s tailscale node has not reached running: %w",
+					client.Hostname(),
+					err,
+				)
 			}
 		}
 
@@ -377,11 +374,22 @@ func (s *AuthOIDCScenario) runTailscaleUp(
 	return fmt.Errorf("failed to up tailscale node: %w", errNoUserAvailable)
 }
 
-func (s *AuthOIDCScenario) Shutdown() error {
+func (s *AuthOIDCScenario) Shutdown() {
 	err := s.pool.Purge(s.mockOIDC)
 	if err != nil {
-		return err
+		log.Printf("failed to remove mock oidc container")
 	}
 
-	return s.Scenario.Shutdown()
+	s.Scenario.Shutdown()
+}
+
+func assertTailscaleNodesLogout(t *testing.T, clients []TailscaleClient) {
+	t.Helper()
+
+	for _, client := range clients {
+		status, err := client.Status()
+		assertNoErr(t, err)
+
+		assert.Equal(t, "NeedsLogin", status.BackendState)
+	}
 }

@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	v1 "github.com/juanfont/headscale/gen/go/headscale/v1"
-	"github.com/juanfont/headscale/hscontrol"
+	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc/status"
@@ -64,11 +64,9 @@ var listRoutesCmd = &cobra.Command{
 				fmt.Sprintf("Error getting machine id from flag: %s", err),
 				output,
 			)
-
-			return
 		}
 
-		ctx, client, conn, cancel := getHeadscaleCLIClient()
+		ctx, client, conn, cancel := newHeadscaleCLIWithConfig()
 		defer cancel()
 		defer conn.Close()
 
@@ -82,45 +80,35 @@ var listRoutesCmd = &cobra.Command{
 					fmt.Sprintf("Cannot get nodes: %s", status.Convert(err).Message()),
 					output,
 				)
-
-				return
 			}
 
 			if output != "" {
-				SuccessOutput(response.Routes, "", output)
-
-				return
+				SuccessOutput(response.GetRoutes(), "", output)
 			}
 
-			routes = response.Routes
+			routes = response.GetRoutes()
 		} else {
-			response, err := client.GetMachineRoutes(ctx, &v1.GetMachineRoutesRequest{
-				MachineId: machineID,
+			response, err := client.GetNodeRoutes(ctx, &v1.GetNodeRoutesRequest{
+				NodeId: machineID,
 			})
 			if err != nil {
 				ErrorOutput(
 					err,
-					fmt.Sprintf("Cannot get routes for machine %d: %s", machineID, status.Convert(err).Message()),
+					fmt.Sprintf("Cannot get routes for node %d: %s", machineID, status.Convert(err).Message()),
 					output,
 				)
-
-				return
 			}
 
 			if output != "" {
-				SuccessOutput(response.Routes, "", output)
-
-				return
+				SuccessOutput(response.GetRoutes(), "", output)
 			}
 
-			routes = response.Routes
+			routes = response.GetRoutes()
 		}
 
 		tableData := routesToPtables(routes)
 		if err != nil {
 			ErrorOutput(err, fmt.Sprintf("Error converting to table: %s", err), output)
-
-			return
 		}
 
 		err = pterm.DefaultTable.WithHasHeader().WithData(tableData).Render()
@@ -130,8 +118,6 @@ var listRoutesCmd = &cobra.Command{
 				fmt.Sprintf("Failed to render pterm table: %s", err),
 				output,
 			)
-
-			return
 		}
 	},
 }
@@ -150,11 +136,9 @@ var enableRouteCmd = &cobra.Command{
 				fmt.Sprintf("Error getting machine id from flag: %s", err),
 				output,
 			)
-
-			return
 		}
 
-		ctx, client, conn, cancel := getHeadscaleCLIClient()
+		ctx, client, conn, cancel := newHeadscaleCLIWithConfig()
 		defer cancel()
 		defer conn.Close()
 
@@ -167,14 +151,10 @@ var enableRouteCmd = &cobra.Command{
 				fmt.Sprintf("Cannot enable route %d: %s", routeID, status.Convert(err).Message()),
 				output,
 			)
-
-			return
 		}
 
 		if output != "" {
 			SuccessOutput(response, "", output)
-
-			return
 		}
 	},
 }
@@ -193,11 +173,9 @@ var disableRouteCmd = &cobra.Command{
 				fmt.Sprintf("Error getting machine id from flag: %s", err),
 				output,
 			)
-
-			return
 		}
 
-		ctx, client, conn, cancel := getHeadscaleCLIClient()
+		ctx, client, conn, cancel := newHeadscaleCLIWithConfig()
 		defer cancel()
 		defer conn.Close()
 
@@ -210,14 +188,10 @@ var disableRouteCmd = &cobra.Command{
 				fmt.Sprintf("Cannot disable route %d: %s", routeID, status.Convert(err).Message()),
 				output,
 			)
-
-			return
 		}
 
 		if output != "" {
 			SuccessOutput(response, "", output)
-
-			return
 		}
 	},
 }
@@ -236,11 +210,9 @@ var deleteRouteCmd = &cobra.Command{
 				fmt.Sprintf("Error getting machine id from flag: %s", err),
 				output,
 			)
-
-			return
 		}
 
-		ctx, client, conn, cancel := getHeadscaleCLIClient()
+		ctx, client, conn, cancel := newHeadscaleCLIWithConfig()
 		defer cancel()
 		defer conn.Close()
 
@@ -253,43 +225,39 @@ var deleteRouteCmd = &cobra.Command{
 				fmt.Sprintf("Cannot delete route %d: %s", routeID, status.Convert(err).Message()),
 				output,
 			)
-
-			return
 		}
 
 		if output != "" {
 			SuccessOutput(response, "", output)
-
-			return
 		}
 	},
 }
 
 // routesToPtables converts the list of routes to a nice table.
 func routesToPtables(routes []*v1.Route) pterm.TableData {
-	tableData := pterm.TableData{{"ID", "Machine", "Prefix", "Advertised", "Enabled", "Primary"}}
+	tableData := pterm.TableData{{"ID", "Node", "Prefix", "Advertised", "Enabled", "Primary"}}
 
 	for _, route := range routes {
 		var isPrimaryStr string
-		prefix, err := netip.ParsePrefix(route.Prefix)
+		prefix, err := netip.ParsePrefix(route.GetPrefix())
 		if err != nil {
-			log.Printf("Error parsing prefix %s: %s", route.Prefix, err)
+			log.Printf("Error parsing prefix %s: %s", route.GetPrefix(), err)
 
 			continue
 		}
-		if prefix == hscontrol.ExitRouteV4 || prefix == hscontrol.ExitRouteV6 {
+		if prefix == types.ExitRouteV4 || prefix == types.ExitRouteV6 {
 			isPrimaryStr = "-"
 		} else {
-			isPrimaryStr = strconv.FormatBool(route.IsPrimary)
+			isPrimaryStr = strconv.FormatBool(route.GetIsPrimary())
 		}
 
 		tableData = append(tableData,
 			[]string{
-				strconv.FormatUint(route.Id, Base10),
-				route.Machine.GivenName,
-				route.Prefix,
-				strconv.FormatBool(route.Advertised),
-				strconv.FormatBool(route.Enabled),
+				strconv.FormatUint(route.GetId(), Base10),
+				route.GetNode().GetGivenName(),
+				route.GetPrefix(),
+				strconv.FormatBool(route.GetAdvertised()),
+				strconv.FormatBool(route.GetEnabled()),
 				isPrimaryStr,
 			})
 	}

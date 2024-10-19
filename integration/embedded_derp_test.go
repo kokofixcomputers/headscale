@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"strings"
 	"testing"
+	"time"
 
-	"github.com/juanfont/headscale/hscontrol"
+	"github.com/juanfont/headscale/hscontrol/util"
 	"github.com/juanfont/headscale/integration/dockertestutil"
 	"github.com/juanfont/headscale/integration/hsic"
 	"github.com/juanfont/headscale/integration/tsic"
@@ -23,69 +25,95 @@ func TestDERPServerScenario(t *testing.T) {
 	IntegrationSkip(t)
 	// t.Parallel()
 
-	baseScenario, err := NewScenario()
-	if err != nil {
-		t.Errorf("failed to create scenario: %s", err)
-	}
+	baseScenario, err := NewScenario(dockertestMaxWait())
+	assertNoErr(t, err)
 
 	scenario := EmbeddedDERPServerScenario{
 		Scenario:     baseScenario,
 		tsicNetworks: map[string]*dockertest.Network{},
 	}
+	defer scenario.ShutdownAssertNoPanics(t)
 
 	spec := map[string]int{
-		"user1": len(TailscaleVersions),
+		"user1": len(MustTestVersions),
 	}
-
-	headscaleConfig := map[string]string{}
-	headscaleConfig["HEADSCALE_DERP_URLS"] = ""
-	headscaleConfig["HEADSCALE_DERP_SERVER_ENABLED"] = "true"
-	headscaleConfig["HEADSCALE_DERP_SERVER_REGION_ID"] = "999"
-	headscaleConfig["HEADSCALE_DERP_SERVER_REGION_CODE"] = "headscale"
-	headscaleConfig["HEADSCALE_DERP_SERVER_REGION_NAME"] = "Headscale Embedded DERP"
-	headscaleConfig["HEADSCALE_DERP_SERVER_STUN_LISTEN_ADDR"] = "0.0.0.0:3478"
 
 	err = scenario.CreateHeadscaleEnv(
 		spec,
-		hsic.WithConfigEnv(headscaleConfig),
 		hsic.WithTestName("derpserver"),
 		hsic.WithExtraPorts([]string{"3478/udp"}),
+		hsic.WithEmbeddedDERPServerOnly(),
 		hsic.WithTLS(),
 		hsic.WithHostnameAsServerURL(),
+		hsic.WithConfigEnv(map[string]string{
+			"HEADSCALE_DERP_AUTO_UPDATE_ENABLED": "true",
+			"HEADSCALE_DERP_UPDATE_FREQUENCY":    "10s",
+		}),
 	)
-
-	if err != nil {
-		t.Errorf("failed to create headscale environment: %s", err)
-	}
+	assertNoErrHeadscaleEnv(t, err)
 
 	allClients, err := scenario.ListTailscaleClients()
-	if err != nil {
-		t.Errorf("failed to get clients: %s", err)
-	}
-
-	allIps, err := scenario.ListTailscaleClientsIPs()
-	if err != nil {
-		t.Errorf("failed to get clients: %s", err)
-	}
+	assertNoErrListClients(t, err)
 
 	err = scenario.WaitForTailscaleSync()
-	if err != nil {
-		t.Errorf("failed wait for tailscale clients to be in sync: %s", err)
-	}
+	assertNoErrSync(t, err)
 
 	allHostnames, err := scenario.ListTailscaleClientsFQDNs()
-	if err != nil {
-		t.Errorf("failed to get FQDNs: %s", err)
+	assertNoErrListFQDN(t, err)
+
+	for _, client := range allClients {
+		status, err := client.Status()
+		assertNoErr(t, err)
+
+		for _, health := range status.Health {
+			if strings.Contains(health, "could not connect to any relay server") {
+				t.Errorf("expected to be connected to derp, found: %s", health)
+			}
+			if strings.Contains(health, "could not connect to the 'Headscale Embedded DERP' relay server.") {
+				t.Errorf("expected to be connected to derp, found: %s", health)
+			}
+		}
 	}
 
 	success := pingDerpAllHelper(t, allClients, allHostnames)
 
-	t.Logf("%d successful pings out of %d", success, len(allClients)*len(allIps))
+	for _, client := range allClients {
+		status, err := client.Status()
+		assertNoErr(t, err)
 
-	err = scenario.Shutdown()
-	if err != nil {
-		t.Errorf("failed to tear down scenario: %s", err)
+		for _, health := range status.Health {
+			if strings.Contains(health, "could not connect to any relay server") {
+				t.Errorf("expected to be connected to derp, found: %s", health)
+			}
+			if strings.Contains(health, "could not connect to the 'Headscale Embedded DERP' relay server.") {
+				t.Errorf("expected to be connected to derp, found: %s", health)
+			}
+		}
 	}
+
+	t.Logf("Run 1: %d successful pings out of %d", success, len(allClients)*len(allHostnames))
+
+	// Let the DERP updater run a couple of times to ensure it does not
+	// break the DERPMap.
+	time.Sleep(30 * time.Second)
+
+	success = pingDerpAllHelper(t, allClients, allHostnames)
+
+	for _, client := range allClients {
+		status, err := client.Status()
+		assertNoErr(t, err)
+
+		for _, health := range status.Health {
+			if strings.Contains(health, "could not connect to any relay server") {
+				t.Errorf("expected to be connected to derp, found: %s", health)
+			}
+			if strings.Contains(health, "could not connect to the 'Headscale Embedded DERP' relay server.") {
+				t.Errorf("expected to be connected to derp, found: %s", health)
+			}
+		}
+	}
+
+	t.Logf("Run2: %d successful pings out of %d", success, len(allClients)*len(allHostnames))
 }
 
 func (s *EmbeddedDERPServerScenario) CreateHeadscaleEnv(
@@ -105,12 +133,12 @@ func (s *EmbeddedDERPServerScenario) CreateHeadscaleEnv(
 
 	headscaleURL.Host = fmt.Sprintf("%s:%s", hsServer.GetHostname(), headscaleURL.Port())
 
-	err = hsServer.WaitForReady()
+	err = hsServer.WaitForRunning()
 	if err != nil {
 		return err
 	}
 
-	hash, err := hscontrol.GenerateRandomStringDNSSafe(scenarioHashLength)
+	hash, err := util.GenerateRandomStringDNSSafe(scenarioHashLength)
 	if err != nil {
 		return err
 	}
@@ -181,21 +209,16 @@ func (s *EmbeddedDERPServerScenario) CreateTailscaleIsolatedNodesInUser(
 
 			version := requestedVersion
 			if requestedVersion == "all" {
-				version = TailscaleVersions[clientN%len(TailscaleVersions)]
+				version = MustTestVersions[clientN%len(MustTestVersions)]
 			}
 
 			cert := hsServer.GetCert()
-
-			user.createWaitGroup.Add(1)
 
 			opts = append(opts,
 				tsic.WithHeadscaleTLS(cert),
 			)
 
-			go func() {
-				defer user.createWaitGroup.Done()
-
-				// TODO(kradalby): error handle this
+			user.createWaitGroup.Go(func() error {
 				tsClient, err := tsic.New(
 					s.pool,
 					version,
@@ -203,34 +226,47 @@ func (s *EmbeddedDERPServerScenario) CreateTailscaleIsolatedNodesInUser(
 					opts...,
 				)
 				if err != nil {
-					// return fmt.Errorf("failed to add tailscale node: %w", err)
-					log.Printf("failed to create tailscale node: %s", err)
+					return fmt.Errorf(
+						"failed to create tailscale (%s) node: %w",
+						tsClient.Hostname(),
+						err,
+					)
 				}
 
-				err = tsClient.WaitForReady()
+				err = tsClient.WaitForNeedsLogin()
 				if err != nil {
-					// return fmt.Errorf("failed to add tailscale node: %w", err)
-					log.Printf("failed to wait for tailscaled: %s", err)
+					return fmt.Errorf(
+						"failed to wait for tailscaled (%s) to need login: %w",
+						tsClient.Hostname(),
+						err,
+					)
 				}
 
+				s.mu.Lock()
 				user.Clients[tsClient.Hostname()] = tsClient
-			}()
+				s.mu.Unlock()
+
+				return nil
+			})
 		}
-		user.createWaitGroup.Wait()
+
+		if err := user.createWaitGroup.Wait(); err != nil {
+			return err
+		}
 
 		return nil
 	}
 
-	return fmt.Errorf("failed to add tailscale node: %w", errNoUserAvailable)
+	return fmt.Errorf("failed to add tailscale nodes: %w", errNoUserAvailable)
 }
 
-func (s *EmbeddedDERPServerScenario) Shutdown() error {
+func (s *EmbeddedDERPServerScenario) Shutdown() {
 	for _, network := range s.tsicNetworks {
 		err := s.pool.RemoveNetwork(network)
 		if err != nil {
-			return err
+			log.Printf("failed to remove DERP network %s", network.Network.Name)
 		}
 	}
 
-	return s.Scenario.Shutdown()
+	s.Scenario.Shutdown()
 }

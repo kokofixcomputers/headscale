@@ -6,22 +6,42 @@ import (
 	"log"
 	"net/netip"
 	"os"
+	"sort"
 	"sync"
+	"testing"
 	"time"
 
 	v1 "github.com/juanfont/headscale/gen/go/headscale/v1"
-	"github.com/juanfont/headscale/hscontrol"
+	"github.com/juanfont/headscale/hscontrol/util"
 	"github.com/juanfont/headscale/integration/dockertestutil"
 	"github.com/juanfont/headscale/integration/hsic"
 	"github.com/juanfont/headscale/integration/tsic"
 	"github.com/ory/dockertest/v3"
-	"github.com/puzpuzpuz/xsync/v2"
+	"github.com/puzpuzpuz/xsync/v3"
+	"github.com/samber/lo"
+	"github.com/stretchr/testify/assert"
+	"golang.org/x/sync/errgroup"
+	"tailscale.com/envknob"
 )
 
 const (
 	scenarioHashLength = 6
-	maxWait            = 60 * time.Second
 )
+
+var usePostgresForTest = envknob.Bool("HEADSCALE_INTEGRATION_POSTGRES")
+
+func enabledVersions(vs map[string]bool) []string {
+	var ret []string
+	for version, enabled := range vs {
+		if enabled {
+			ret = append(ret, version)
+		}
+	}
+
+	sort.Sort(sort.Reverse(sort.StringSlice(ret)))
+
+	return ret
+}
 
 var (
 	errNoHeadscaleAvailable = errors.New("no headscale available")
@@ -30,36 +50,50 @@ var (
 
 	// Tailscale started adding TS2021 support in CapabilityVersion>=28 (v1.24.0), but
 	// proper support in Headscale was only added for CapabilityVersion>=39 clients (v1.30.0).
-	tailscaleVersions2021 = []string{
-		"head",
-		"unstable",
-		"1.40.0",
-		"1.38.4",
-		"1.36.2",
-		"1.34.2",
-		"1.32.3",
-		"1.30.2",
+	tailscaleVersions2021 = map[string]bool{
+		"head":     true,
+		"unstable": true,
+		"1.70":     true,  // CapVer: not checked
+		"1.68":     true,  // CapVer: not checked
+		"1.66":     true,  // CapVer: not checked
+		"1.64":     true,  // CapVer: not checked
+		"1.62":     true,  // CapVer: not checked
+		"1.60":     true,  // CapVer: not checked
+		"1.58":     true,  // CapVer: not checked
+		"1.56":     true,  // CapVer: 82
+		"1.54":     true,  // CapVer: 79
+		"1.52":     true,  // CapVer: 79
+		"1.50":     true,  // CapVer: 74
+		"1.48":     true,  // CapVer: 68
+		"1.46":     true,  // CapVer: 65
+		"1.44":     false, // CapVer: 63
+		"1.42":     false, // Oldest supported version, CapVer: 61
+		"1.40":     false, // CapVer: 61
+		"1.38":     false, // CapVer: 58
+		"1.36":     false, // CapVer: 56
+		"1.34":     false, // CapVer: 51
+		"1.32":     false, // CapVer: 46
+		"1.30":     false,
 	}
 
-	tailscaleVersions2019 = []string{
-		"1.28.0",
-		"1.26.2",
-		"1.24.2",
-		"1.22.2",
-		"1.20.4",
+	tailscaleVersions2019 = map[string]bool{
+		"1.28": false,
+		"1.26": false,
+		"1.24": false, // Tailscale SSH
+		"1.22": false,
+		"1.20": false,
+		"1.18": false,
 	}
 
 	// tailscaleVersionsUnavailable = []string{
 	// 	// These versions seem to fail when fetching from apt.
-	//  "1.18.2",
-	// 	"1.16.2",
-	// 	"1.14.6",
-	// 	"1.12.4",
-	// 	"1.10.2",
-	// 	"1.8.7",
+	// "1.14.6",
+	// "1.12.4",
+	// "1.10.2",
+	// "1.8.7",
 	// }.
 
-	// TailscaleVersions represents a list of Tailscale versions the suite
+	// AllVersions represents a list of Tailscale versions the suite
 	// uses to test compatibility with the ControlServer.
 	//
 	// The list contains two special cases, "head" and "unstable" which
@@ -68,9 +102,20 @@ var (
 	//
 	// The rest of the version represents Tailscale versions that can be
 	// found in Tailscale's apt repository.
-	TailscaleVersions = append(
-		tailscaleVersions2021,
-		tailscaleVersions2019...,
+	AllVersions = append(
+		enabledVersions(tailscaleVersions2021),
+		enabledVersions(tailscaleVersions2019)...,
+	)
+
+	// MustTestVersions is the minimum set of versions we should test.
+	// At the moment, this is arbitrarily chosen as:
+	//
+	// - Two unstable (HEAD and unstable)
+	// - Two latest versions
+	// - Two oldest supported version.
+	MustTestVersions = append(
+		AllVersions[0:4],
+		AllVersions[len(AllVersions)-2:]...,
 	)
 )
 
@@ -79,9 +124,9 @@ var (
 type User struct {
 	Clients map[string]TailscaleClient
 
-	createWaitGroup sync.WaitGroup
-	joinWaitGroup   sync.WaitGroup
-	syncWaitGroup   sync.WaitGroup
+	createWaitGroup errgroup.Group
+	joinWaitGroup   errgroup.Group
+	syncWaitGroup   errgroup.Group
 }
 
 // Scenario is a representation of an environment with one ControlServer and
@@ -99,13 +144,13 @@ type Scenario struct {
 	pool    *dockertest.Pool
 	network *dockertest.Network
 
-	headscaleLock sync.Mutex
+	mu sync.Mutex
 }
 
 // NewScenario creates a test Scenario which can be used to bootstraps a ControlServer with
 // a set of Users and TailscaleClients.
-func NewScenario() (*Scenario, error) {
-	hash, err := hscontrol.GenerateRandomStringDNSSafe(scenarioHashLength)
+func NewScenario(maxWait time.Duration) (*Scenario, error) {
+	hash, err := util.GenerateRandomStringDNSSafe(scenarioHashLength)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +181,7 @@ func NewScenario() (*Scenario, error) {
 	}
 
 	return &Scenario{
-		controlServers: xsync.NewMapOf[ControlServer](),
+		controlServers: xsync.NewMapOf[string, ControlServer](),
 		users:          make(map[string]*User),
 
 		pool:    pool,
@@ -144,18 +189,24 @@ func NewScenario() (*Scenario, error) {
 	}, nil
 }
 
-// Shutdown shuts down and cleans up all the containers (ControlServer, TailscaleClient)
-// and networks associated with it.
-// In addition, it will save the logs of the ControlServer to `/tmp/control` in the
-// environment running the tests.
-func (s *Scenario) Shutdown() error {
+func (s *Scenario) ShutdownAssertNoPanics(t *testing.T) {
 	s.controlServers.Range(func(_ string, control ControlServer) bool {
-		err := control.Shutdown()
+		stdoutPath, stderrPath, err := control.Shutdown()
 		if err != nil {
 			log.Printf(
 				"Failed to shut down control: %s",
 				fmt.Errorf("failed to tear down control: %w", err),
 			)
+		}
+
+		if t != nil {
+			stdout, err := os.ReadFile(stdoutPath)
+			assert.NoError(t, err)
+			assert.NotContains(t, string(stdout), "panic")
+
+			stderr, err := os.ReadFile(stderrPath)
+			assert.NoError(t, err)
+			assert.NotContains(t, string(stderr), "panic")
 		}
 
 		return true
@@ -166,21 +217,27 @@ func (s *Scenario) Shutdown() error {
 			log.Printf("removing client %s in user %s", client.Hostname(), userName)
 			err := client.Shutdown()
 			if err != nil {
-				return fmt.Errorf("failed to tear down client: %w", err)
+				log.Printf("failed to tear down client: %s", err)
 			}
 		}
 	}
 
 	if err := s.pool.RemoveNetwork(s.network); err != nil {
-		return fmt.Errorf("failed to remove network: %w", err)
+		log.Printf("failed to remove network: %s", err)
 	}
 
 	// TODO(kradalby): This seem redundant to the previous call
 	// if err := s.network.Close(); err != nil {
 	// 	return fmt.Errorf("failed to tear down network: %w", err)
 	// }
+}
 
-	return nil
+// Shutdown shuts down and cleans up all the containers (ControlServer, TailscaleClient)
+// and networks associated with it.
+// In addition, it will save the logs of the ControlServer to `/tmp/control` in the
+// environment running the tests.
+func (s *Scenario) Shutdown() {
+	s.ShutdownAssertNoPanics(nil)
 }
 
 // Users returns the name of all users associated with the Scenario.
@@ -201,11 +258,15 @@ func (s *Scenario) Users() []string {
 // will be return, otherwise a new instance will be created.
 // TODO(kradalby): make port and headscale configurable, multiple instances support?
 func (s *Scenario) Headscale(opts ...hsic.Option) (ControlServer, error) {
-	s.headscaleLock.Lock()
-	defer s.headscaleLock.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	if headscale, ok := s.controlServers.Load("headscale"); ok {
 		return headscale, nil
+	}
+
+	if usePostgresForTest {
+		opts = append(opts, hsic.WithPostgres())
 	}
 
 	headscale, err := hsic.New(s.pool, s.network, opts...)
@@ -213,7 +274,7 @@ func (s *Scenario) Headscale(opts ...hsic.Option) (ControlServer, error) {
 		return nil, fmt.Errorf("failed to create headscale container: %w", err)
 	}
 
-	err = headscale.WaitForReady()
+	err = headscale.WaitForRunning()
 	if err != nil {
 		return nil, fmt.Errorf("failed reach headscale container: %w", err)
 	}
@@ -272,11 +333,13 @@ func (s *Scenario) CreateTailscaleNodesInUser(
 	opts ...tsic.Option,
 ) error {
 	if user, ok := s.users[userStr]; ok {
+		var versions []string
 		for i := 0; i < count; i++ {
 			version := requestedVersion
 			if requestedVersion == "all" {
-				version = TailscaleVersions[i%len(TailscaleVersions)]
+				version = MustTestVersions[i%len(MustTestVersions)]
 			}
+			versions = append(versions, version)
 
 			headscale, err := s.Headscale()
 			if err != nil {
@@ -286,17 +349,12 @@ func (s *Scenario) CreateTailscaleNodesInUser(
 			cert := headscale.GetCert()
 			hostname := headscale.GetHostname()
 
-			user.createWaitGroup.Add(1)
-
 			opts = append(opts,
 				tsic.WithHeadscaleTLS(cert),
 				tsic.WithHeadscaleName(hostname),
 			)
 
-			go func() {
-				defer user.createWaitGroup.Done()
-
-				// TODO(kradalby): error handle this
+			user.createWaitGroup.Go(func() error {
 				tsClient, err := tsic.New(
 					s.pool,
 					version,
@@ -304,20 +362,34 @@ func (s *Scenario) CreateTailscaleNodesInUser(
 					opts...,
 				)
 				if err != nil {
-					// return fmt.Errorf("failed to add tailscale node: %w", err)
-					log.Printf("failed to create tailscale node: %s", err)
+					return fmt.Errorf(
+						"failed to create tailscale (%s) node: %w",
+						tsClient.Hostname(),
+						err,
+					)
 				}
 
-				err = tsClient.WaitForReady()
+				err = tsClient.WaitForNeedsLogin()
 				if err != nil {
-					// return fmt.Errorf("failed to add tailscale node: %w", err)
-					log.Printf("failed to wait for tailscaled: %s", err)
+					return fmt.Errorf(
+						"failed to wait for tailscaled (%s) to need login: %w",
+						tsClient.Hostname(),
+						err,
+					)
 				}
 
+				s.mu.Lock()
 				user.Clients[tsClient.Hostname()] = tsClient
-			}()
+				s.mu.Unlock()
+
+				return nil
+			})
 		}
-		user.createWaitGroup.Wait()
+		if err := user.createWaitGroup.Wait(); err != nil {
+			return err
+		}
+
+		log.Printf("testing versions %v, MustTestVersions %v", lo.Uniq(versions), MustTestVersions)
 
 		return nil
 	}
@@ -332,29 +404,20 @@ func (s *Scenario) RunTailscaleUp(
 ) error {
 	if user, ok := s.users[userStr]; ok {
 		for _, client := range user.Clients {
-			user.joinWaitGroup.Add(1)
-
-			go func(c TailscaleClient) {
-				defer user.joinWaitGroup.Done()
-
-				// TODO(kradalby): error handle this
-				_ = c.Up(loginServer, authKey)
-			}(client)
-
-			err := client.WaitForReady()
-			if err != nil {
-				log.Printf("error waiting for client %s to be ready: %s", client.Hostname(), err)
-			}
+			c := client
+			user.joinWaitGroup.Go(func() error {
+				return c.Login(loginServer, authKey)
+			})
 		}
 
-		user.joinWaitGroup.Wait()
+		if err := user.joinWaitGroup.Wait(); err != nil {
+			return err
+		}
 
 		for _, client := range user.Clients {
-			err := client.WaitForReady()
+			err := client.WaitForRunning()
 			if err != nil {
-				log.Printf("client %s was not ready: %s", client.Hostname(), err)
-
-				return fmt.Errorf("failed to up tailscale node: %w", err)
+				return fmt.Errorf("%s failed to up tailscale node: %w", client.Hostname(), err)
 			}
 		}
 
@@ -381,24 +444,40 @@ func (s *Scenario) CountTailscale() int {
 func (s *Scenario) WaitForTailscaleSync() error {
 	tsCount := s.CountTailscale()
 
+	err := s.WaitForTailscaleSyncWithPeerCount(tsCount - 1)
+	if err != nil {
+		for _, user := range s.users {
+			for _, client := range user.Clients {
+				peers, allOnline, _ := client.FailingPeersAsString()
+				if !allOnline {
+					log.Println(peers)
+				}
+			}
+		}
+	}
+
+	return err
+}
+
+// WaitForTailscaleSyncWithPeerCount blocks execution until all the TailscaleClient reports
+// to have all other TailscaleClients present in their netmap.NetworkMap.
+func (s *Scenario) WaitForTailscaleSyncWithPeerCount(peerCount int) error {
 	for _, user := range s.users {
 		for _, client := range user.Clients {
-			user.syncWaitGroup.Add(1)
-
-			go func(c TailscaleClient) {
-				defer user.syncWaitGroup.Done()
-
-				// TODO(kradalby): error handle this
-				_ = c.WaitForPeers(tsCount)
-			}(client)
+			c := client
+			user.syncWaitGroup.Go(func() error {
+				return c.WaitForPeers(peerCount)
+			})
 		}
-		user.syncWaitGroup.Wait()
+		if err := user.syncWaitGroup.Wait(); err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
-// CreateHeadscaleEnv is a conventient method returning a complete Headcale
+// CreateHeadscaleEnv is a convenient method returning a complete Headcale
 // test environment with nodes of all versions, joined to the server with X
 // users.
 func (s *Scenario) CreateHeadscaleEnv(
@@ -455,7 +534,7 @@ func (s *Scenario) GetIPs(user string) ([]netip.Addr, error) {
 	return ips, fmt.Errorf("failed to get ips: %w", errNoUserAvailable)
 }
 
-// GetIPs returns all TailscaleClients associated with a User in a Scenario.
+// GetClients returns all TailscaleClients associated with a User in a Scenario.
 func (s *Scenario) GetClients(user string) ([]TailscaleClient, error) {
 	var clients []TailscaleClient
 	if ns, ok := s.users[user]; ok {
@@ -531,7 +610,7 @@ func (s *Scenario) ListTailscaleClientsIPs(users ...string) ([]netip.Addr, error
 	return allIps, nil
 }
 
-// ListTailscaleClientsIPs returns a list of FQDN based on Users
+// ListTailscaleClientsFQDNs returns a list of FQDN based on Users
 // passed as parameters.
 func (s *Scenario) ListTailscaleClientsFQDNs(users ...string) ([]string, error) {
 	allFQDNs := make([]string, 0)
@@ -555,18 +634,18 @@ func (s *Scenario) ListTailscaleClientsFQDNs(users ...string) ([]string, error) 
 
 // WaitForTailscaleLogout blocks execution until all TailscaleClients have
 // logged out of the ControlServer.
-func (s *Scenario) WaitForTailscaleLogout() {
+func (s *Scenario) WaitForTailscaleLogout() error {
 	for _, user := range s.users {
 		for _, client := range user.Clients {
-			user.syncWaitGroup.Add(1)
-
-			go func(c TailscaleClient) {
-				defer user.syncWaitGroup.Done()
-
-				// TODO(kradalby): error handle this
-				_ = c.WaitForLogout()
-			}(client)
+			c := client
+			user.syncWaitGroup.Go(func() error {
+				return c.WaitForNeedsLogin()
+			})
 		}
-		user.syncWaitGroup.Wait()
+		if err := user.syncWaitGroup.Wait(); err != nil {
+			return err
+		}
 	}
+
+	return nil
 }

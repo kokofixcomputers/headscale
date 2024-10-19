@@ -10,19 +10,15 @@ issues:
 linters:
   enable-all: true
   disable:
-    - exhaustivestruct
+    - depguard
+
     - revive
     - lll
-    - interfacer
-    - scopelint
-    - maligned
-    - golint
     - gofmt
     - gochecknoglobals
     - gochecknoinits
     - gocognit
     - funlen
-    - exhaustivestruct
     - tagliatelle
     - godox
     - ireturn
@@ -30,13 +26,7 @@ linters:
     - exhaustruct
     - nolintlint
     - musttag # causes issues with imported libs
-
-    # deprecated
-    - structcheck # replaced by unused
-    - ifshort # deprecated by the owner
-    - varcheck # replaced by unused
-    - nosnakecase # replaced by revive
-    - deadcode # replaced by unused
+    - depguard
 
     # We should strive to enable these:
     - wrapcheck

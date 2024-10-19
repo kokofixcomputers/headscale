@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math/big"
 	"net"
@@ -18,12 +19,15 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
 	v1 "github.com/juanfont/headscale/gen/go/headscale/v1"
-	"github.com/juanfont/headscale/hscontrol"
+	"github.com/juanfont/headscale/hscontrol/policy"
+	"github.com/juanfont/headscale/hscontrol/types"
+	"github.com/juanfont/headscale/hscontrol/util"
 	"github.com/juanfont/headscale/integration/dockertestutil"
 	"github.com/juanfont/headscale/integration/integrationutil"
 	"github.com/ory/dockertest/v3"
@@ -55,15 +59,18 @@ type HeadscaleInContainer struct {
 	container *dockertest.Resource
 	network   *dockertest.Network
 
+	pgContainer *dockertest.Resource
+
 	// optional config
 	port             int
 	extraPorts       []string
 	hostPortBindings map[string][]string
-	aclPolicy        *hscontrol.ACLPolicy
+	aclPolicy        *policy.ACLPolicy
 	env              map[string]string
 	tlsCert          []byte
 	tlsKey           []byte
 	filesInContainer []fileInContainer
+	postgres         bool
 }
 
 // Option represent optional settings that can be given to a
@@ -72,10 +79,10 @@ type Option = func(c *HeadscaleInContainer)
 
 // WithACLPolicy adds a hscontrol.ACLPolicy policy to the
 // HeadscaleInContainer instance.
-func WithACLPolicy(acl *hscontrol.ACLPolicy) Option {
+func WithACLPolicy(acl *policy.ACLPolicy) Option {
 	return func(hsic *HeadscaleInContainer) {
 		// TODO(kradalby): Move somewhere appropriate
-		hsic.env["HEADSCALE_ACL_POLICY_PATH"] = aclPolicyPath
+		hsic.env["HEADSCALE_POLICY_PATH"] = aclPolicyPath
 
 		hsic.aclPolicy = acl
 	}
@@ -132,7 +139,7 @@ func WithHostPortBindings(bindings map[string][]string) Option {
 // in the Docker container name.
 func WithTestName(testName string) Option {
 	return func(hsic *HeadscaleInContainer) {
-		hash, _ := hscontrol.GenerateRandomStringDNSSafe(hsicHashLength)
+		hash, _ := util.GenerateRandomStringDNSSafe(hsicHashLength)
 
 		hostname := fmt.Sprintf("hs-%s-%s", testName, hash)
 		hsic.hostname = hostname
@@ -161,13 +168,62 @@ func WithFileInContainer(path string, contents []byte) Option {
 	}
 }
 
+// WithPostgres spins up a Postgres container and
+// sets it as the main database.
+func WithPostgres() Option {
+	return func(hsic *HeadscaleInContainer) {
+		hsic.postgres = true
+	}
+}
+
+// WithIPAllocationStrategy sets the tests IP Allocation strategy.
+func WithIPAllocationStrategy(strategy types.IPAllocationStrategy) Option {
+	return func(hsic *HeadscaleInContainer) {
+		hsic.env["HEADSCALE_PREFIXES_ALLOCATION"] = string(strategy)
+	}
+}
+
+// WithEmbeddedDERPServerOnly configures Headscale to start
+// and only use the embedded DERP server.
+// It requires WithTLS and WithHostnameAsServerURL to be
+// set.
+func WithEmbeddedDERPServerOnly() Option {
+	return func(hsic *HeadscaleInContainer) {
+		hsic.env["HEADSCALE_DERP_URLS"] = ""
+		hsic.env["HEADSCALE_DERP_SERVER_ENABLED"] = "true"
+		hsic.env["HEADSCALE_DERP_SERVER_REGION_ID"] = "999"
+		hsic.env["HEADSCALE_DERP_SERVER_REGION_CODE"] = "headscale"
+		hsic.env["HEADSCALE_DERP_SERVER_REGION_NAME"] = "Headscale Embedded DERP"
+		hsic.env["HEADSCALE_DERP_SERVER_STUN_LISTEN_ADDR"] = "0.0.0.0:3478"
+		hsic.env["HEADSCALE_DERP_SERVER_PRIVATE_KEY_PATH"] = "/tmp/derp.key"
+
+		// Envknob for enabling DERP debug logs
+		hsic.env["DERP_DEBUG_LOGS"] = "true"
+		hsic.env["DERP_PROBER_DEBUG_LOGS"] = "true"
+	}
+}
+
+// WithTuning allows changing the tuning settings easily.
+func WithTuning(batchTimeout time.Duration, mapSessionChanSize int) Option {
+	return func(hsic *HeadscaleInContainer) {
+		hsic.env["HEADSCALE_TUNING_BATCH_CHANGE_DELAY"] = batchTimeout.String()
+		hsic.env["HEADSCALE_TUNING_NODE_MAPSESSION_BUFFERED_CHAN_SIZE"] = strconv.Itoa(mapSessionChanSize)
+	}
+}
+
+func WithTimezone(timezone string) Option {
+	return func(hsic *HeadscaleInContainer) {
+		hsic.env["TZ"] = timezone
+	}
+}
+
 // New returns a new HeadscaleInContainer instance.
 func New(
 	pool *dockertest.Pool,
 	network *dockertest.Network,
 	opts ...Option,
 ) (*HeadscaleInContainer, error) {
-	hash, err := hscontrol.GenerateRandomStringDNSSafe(hsicHashLength)
+	hash, err := util.GenerateRandomStringDNSSafe(hsicHashLength)
 	if err != nil {
 		return nil, err
 	}
@@ -208,9 +264,41 @@ func New(
 		ContextDir: dockerContextPath,
 	}
 
+	if hsic.postgres {
+		hsic.env["HEADSCALE_DATABASE_TYPE"] = "postgres"
+		hsic.env["HEADSCALE_DATABASE_POSTGRES_HOST"] = fmt.Sprintf("postgres-%s", hash)
+		hsic.env["HEADSCALE_DATABASE_POSTGRES_USER"] = "headscale"
+		hsic.env["HEADSCALE_DATABASE_POSTGRES_PASS"] = "headscale"
+		hsic.env["HEADSCALE_DATABASE_POSTGRES_NAME"] = "headscale"
+		delete(hsic.env, "HEADSCALE_DATABASE_SQLITE_PATH")
+
+		pg, err := pool.RunWithOptions(
+			&dockertest.RunOptions{
+				Name:       fmt.Sprintf("postgres-%s", hash),
+				Repository: "postgres",
+				Tag:        "latest",
+				Networks:   []*dockertest.Network{network},
+				Env: []string{
+					"POSTGRES_USER=headscale",
+					"POSTGRES_PASSWORD=headscale",
+					"POSTGRES_DB=headscale",
+				},
+			})
+		if err != nil {
+			return nil, fmt.Errorf("starting postgres container: %w", err)
+		}
+
+		hsic.pgContainer = pg
+	}
+
 	env := []string{
-		"HEADSCALE_PROFILING_ENABLED=1",
-		"HEADSCALE_PROFILING_PATH=/tmp/profile",
+		"HEADSCALE_DEBUG_PROFILING_ENABLED=1",
+		"HEADSCALE_DEBUG_PROFILING_PATH=/tmp/profile",
+		"HEADSCALE_DEBUG_DUMP_MAPRESPONSE_PATH=/tmp/mapresponses",
+		"HEADSCALE_DEBUG_DEADLOCK=1",
+		"HEADSCALE_DEBUG_DEADLOCK_TIMEOUT=5s",
+		"HEADSCALE_DEBUG_HIGH_CARDINALITY_METRICS=1",
+		"HEADSCALE_DEBUG_DUMP_CONFIG=1",
 	}
 	for key, value := range hsic.env {
 		env = append(env, fmt.Sprintf("%s=%s", key, value))
@@ -220,7 +308,7 @@ func New(
 
 	runOptions := &dockertest.RunOptions{
 		Name:         hsic.hostname,
-		ExposedPorts: append([]string{portProto}, hsic.extraPorts...),
+		ExposedPorts: append([]string{portProto, "9090/tcp"}, hsic.extraPorts...),
 		Networks:     []*dockertest.Network{network},
 		// Cmd:          []string{"headscale", "serve"},
 		// TODO(kradalby): Get rid of this hack, we currently need to give us some
@@ -310,12 +398,20 @@ func (t *HeadscaleInContainer) hasTLS() bool {
 }
 
 // Shutdown stops and cleans up the Headscale container.
-func (t *HeadscaleInContainer) Shutdown() error {
-	err := t.SaveLog("/tmp/control")
+func (t *HeadscaleInContainer) Shutdown() (string, string, error) {
+	stdoutPath, stderrPath, err := t.SaveLog("/tmp/control")
 	if err != nil {
 		log.Printf(
 			"Failed to save log from control: %s",
 			fmt.Errorf("failed to save log from control: %w", err),
+		)
+	}
+
+	err = t.SaveMetrics(fmt.Sprintf("/tmp/control/%s_metrics.txt", t.hostname))
+	if err != nil {
+		log.Printf(
+			"Failed to metrics from control: %s",
+			err,
 		)
 	}
 
@@ -338,13 +434,56 @@ func (t *HeadscaleInContainer) Shutdown() error {
 		)
 	}
 
-	return t.pool.Purge(t.container)
+	err = t.SaveMapResponses("/tmp/control")
+	if err != nil {
+		log.Printf(
+			"Failed to save mapresponses from control: %s",
+			fmt.Errorf("failed to save mapresponses from control: %w", err),
+		)
+	}
+
+	// We dont have a database to save if we use postgres
+	if !t.postgres {
+		err = t.SaveDatabase("/tmp/control")
+		if err != nil {
+			log.Printf(
+				"Failed to save database from control: %s",
+				fmt.Errorf("failed to save database from control: %w", err),
+			)
+		}
+	}
+
+	// Cleanup postgres container if enabled.
+	if t.postgres {
+		t.pool.Purge(t.pgContainer)
+	}
+
+	return stdoutPath, stderrPath, t.pool.Purge(t.container)
 }
 
 // SaveLog saves the current stdout log of the container to a path
 // on the host system.
-func (t *HeadscaleInContainer) SaveLog(path string) error {
+func (t *HeadscaleInContainer) SaveLog(path string) (string, string, error) {
 	return dockertestutil.SaveLog(t.pool, t.container, path)
+}
+
+func (t *HeadscaleInContainer) SaveMetrics(savePath string) error {
+	resp, err := http.Get(fmt.Sprintf("http://%s:9090/metrics", t.hostname))
+	if err != nil {
+		return fmt.Errorf("getting metrics: %w", err)
+	}
+	defer resp.Body.Close()
+	out, err := os.Create(savePath)
+	if err != nil {
+		return fmt.Errorf("creating file for metrics: %w", err)
+	}
+	defer out.Close()
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		return fmt.Errorf("copy response to file: %w", err)
+	}
+
+	return nil
 }
 
 func (t *HeadscaleInContainer) SaveProfile(savePath string) error {
@@ -355,6 +494,42 @@ func (t *HeadscaleInContainer) SaveProfile(savePath string) error {
 
 	err = os.WriteFile(
 		path.Join(savePath, t.hostname+".pprof.tar"),
+		tarFile,
+		os.ModePerm,
+	)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (t *HeadscaleInContainer) SaveMapResponses(savePath string) error {
+	tarFile, err := t.FetchPath("/tmp/mapresponses")
+	if err != nil {
+		return err
+	}
+
+	err = os.WriteFile(
+		path.Join(savePath, t.hostname+".maps.tar"),
+		tarFile,
+		os.ModePerm,
+	)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (t *HeadscaleInContainer) SaveDatabase(savePath string) error {
+	tarFile, err := t.FetchPath("/tmp/integration_test_db.sqlite3")
+	if err != nil {
+		return err
+	}
+
+	err = os.WriteFile(
+		path.Join(savePath, t.hostname+".db.tar"),
 		tarFile,
 		os.ModePerm,
 	)
@@ -382,7 +557,7 @@ func (t *HeadscaleInContainer) Execute(
 			log.Printf("command stdout: %s\n", stdout)
 		}
 
-		return "", err
+		return stdout, fmt.Errorf("executing command in docker: %w, stderr: %s", err, stderr)
 	}
 
 	return stdout, nil
@@ -427,9 +602,9 @@ func (t *HeadscaleInContainer) GetHostname() string {
 	return t.hostname
 }
 
-// WaitForReady blocks until the Headscale instance is ready to
+// WaitForRunning blocks until the Headscale instance is ready to
 // serve clients.
-func (t *HeadscaleInContainer) WaitForReady() error {
+func (t *HeadscaleInContainer) WaitForRunning() error {
 	url := t.GetHealthEndpoint()
 
 	log.Printf("waiting for headscale to be ready at %s", url)
@@ -519,11 +694,11 @@ func (t *HeadscaleInContainer) CreateAuthKey(
 	return &preAuthKey, nil
 }
 
-// ListMachinesInUser list the TailscaleClients (Machine, Headscale internal representation)
+// ListNodesInUser list the TailscaleClients (Node, Headscale internal representation)
 // associated with a user.
-func (t *HeadscaleInContainer) ListMachinesInUser(
+func (t *HeadscaleInContainer) ListNodesInUser(
 	user string,
-) ([]*v1.Machine, error) {
+) ([]*v1.Node, error) {
 	command := []string{"headscale", "--user", user, "nodes", "list", "--output", "json"}
 
 	result, _, err := dockertestutil.ExecuteCommand(
@@ -535,7 +710,7 @@ func (t *HeadscaleInContainer) ListMachinesInUser(
 		return nil, fmt.Errorf("failed to execute list node command: %w", err)
 	}
 
-	var nodes []*v1.Machine
+	var nodes []*v1.Node
 	err = json.Unmarshal([]byte(result), &nodes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal nodes: %w", err)
@@ -582,7 +757,7 @@ func createCertificate(hostname string) ([]byte, []byte, error) {
 			Locality:     []string{"Leiden"},
 		},
 		NotBefore: time.Now(),
-		NotAfter:  time.Now().Add(60 * time.Minute),
+		NotAfter:  time.Now().Add(60 * time.Hour),
 		IsCA:      true,
 		ExtKeyUsage: []x509.ExtKeyUsage{
 			x509.ExtKeyUsageClientAuth,
