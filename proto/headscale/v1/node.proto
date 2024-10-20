@@ -99,6 +99,15 @@ message RenameNodeResponse {
     Node node = 1;
 }
 
+message ChangeIPAddressesNodeRequest {
+    uint64 node_id = 1;
+    string new_ip_addresses = 2;
+}
+
+message ChangeIPAddressesNodeResponse {
+    Node node = 1;
+}
+
 message ListNodesRequest {
     string user = 1;
 }

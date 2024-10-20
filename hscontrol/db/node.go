@@ -255,6 +255,32 @@ func RenameNode(tx *gorm.DB,
 	return nil
 }
 
+func ChangeIPAddressesNode(tx *gorm.DB, node *types.Node, alloc *IPAllocator, ip netip.Addr) error {
+	nodeID := node.ID
+	usedIPs := alloc.usedIPs
+	isAvailable, err := alloc.IsAvailableIP(
+		ip,
+	)
+	if err != nil || isAvailable == false {
+		return err
+	}
+	if ip.Is4() {
+		iPv4 := node.IPv4
+		if err := tx.Model(&types.Node{}).Where("id = ? AND ipv4 = ?", nodeID, iPv4.String()).Update("ipv4", ip.String()).Error; err != nil {
+			return fmt.Errorf("failed to change ip addresses node in the database: %w", err)
+		}
+		usedIPs.Remove(*iPv4)
+	} else {
+		iPv6 := node.IPv6
+		if err := tx.Model(&types.Node{}).Where("id = ? AND ipv6 = ?", nodeID, iPv6.String()).Update("ipv6", ip.String()).Error; err != nil {
+			return fmt.Errorf("failed to change ip addresses node in the database: %w", err)
+		}
+		usedIPs.Remove(*iPv6)
+	}
+	usedIPs.Add(ip)
+	return nil
+}
+
 func (hsdb *HSDatabase) NodeSetExpiry(nodeID types.NodeID, expiry time.Time) error {
 	return hsdb.Write(func(tx *gorm.DB) error {
 		return NodeSetExpiry(tx, nodeID, expiry)

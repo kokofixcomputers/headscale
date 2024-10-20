@@ -113,6 +113,20 @@ service HeadscaleService {
         };
     }
 
+    rpc ChangeIPv4AddressesNode(ChangeIPAddressesNodeRequest) returns (ChangeIPAddressesNodeResponse) {
+        option(google.api.http) = {
+            post: "/api/v1/node/{node_id}/changeipv4addresses"
+            body: "*"
+        };
+    }
+
+    rpc ChangeIPv6AddressesNode(ChangeIPAddressesNodeRequest) returns (ChangeIPAddressesNodeResponse) {
+        option(google.api.http) = {
+            post: "/api/v1/node/{node_id}/changeipv6addresses"
+            body: "*"
+        };
+    }
+
     rpc ListNodes(ListNodesRequest) returns (ListNodesResponse) {
         option (google.api.http) = {
             get: "/api/v1/node"

@@ -248,6 +248,26 @@ func randomNext(pfx netip.Prefix) (netip.Addr, error) {
 	return ip, nil
 }
 
+func (i *IPAllocator) IsAvailableIP(ip netip.Addr) (bool, error) {
+	set, err := i.usedIPs.IPSet()
+	if err != nil {
+		return false, err
+	}
+	if ip.Is4() {
+		if !i.prefix4.Contains(ip) {
+			return false, ErrCouldNotAllocateIP
+		}
+	} else {
+		if !i.prefix6.Contains(ip) {
+			return false, ErrCouldNotAllocateIP
+		}
+	}
+	if set.Contains(ip) {
+		return false, ErrCouldNotAllocateIP
+	}
+	return true, nil
+}
+
 // BackfillNodeIPs will take a database transaction, and
 // iterate through all of the current nodes in headscale
 // and ensure it has IP addresses according to the current

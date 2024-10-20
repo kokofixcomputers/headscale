@@ -320,6 +320,84 @@
         ]
       }
     },
+    "/api/v1/node/{nodeId}/changeipv4addresses": {
+      "post": {
+        "operationId": "HeadscaleService_ChangeIPv4AddressesNode",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ChangeIPAddressesNodeResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "nodeId",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "format": "uint64"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/HeadscaleServiceChangeIPv4AddressesNodeBody"
+            }
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
+    "/api/v1/node/{nodeId}/changeipv6addresses": {
+      "post": {
+        "operationId": "HeadscaleService_ChangeIPv6AddressesNode",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ChangeIPAddressesNodeResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "nodeId",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "format": "uint64"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/HeadscaleServiceChangeIPv6AddressesNodeBody"
+            }
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
     "/api/v1/node/{nodeId}/expire": {
       "post": {
         "operationId": "HeadscaleService_ExpireNode",
@@ -906,6 +984,22 @@
     }
   },
   "definitions": {
+    "HeadscaleServiceChangeIPv4AddressesNodeBody": {
+      "type": "object",
+      "properties": {
+        "newIpAddresses": {
+          "type": "string"
+        }
+      }
+    },
+    "HeadscaleServiceChangeIPv6AddressesNodeBody": {
+      "type": "object",
+      "properties": {
+        "newIpAddresses": {
+          "type": "string"
+        }
+      }
+    },
     "HeadscaleServiceSetTagsBody": {
       "type": "object",
       "properties": {
@@ -977,6 +1071,14 @@
           "items": {
             "type": "string"
           }
+        }
+      }
+    },
+    "v1ChangeIPAddressesNodeResponse": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "$ref": "#/definitions/v1Node"
         }
       }
     },
