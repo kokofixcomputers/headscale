@@ -184,6 +184,7 @@ service HeadscaleService {
   rpc ListApiKeys(ListApiKeysRequest) returns (ListApiKeysResponse) {
     option (google.api.http) = {
       get : "/api/v1/apikey"
+      options: "/api/v1/apikey"
     };
   }
 
